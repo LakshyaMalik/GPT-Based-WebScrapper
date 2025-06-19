@@ -1,68 +1,59 @@
 import streamlit as st
-import openai
 import pandas as pd
 import json
-from io import StringIO
+import re
+import google.generativeai as genai
+from secret import gemini
 
-# OpenAI API Key
-openai.api_key = "YOUR_API_KEY"
+genai.configure(api_key=gemini)
+model = genai.GenerativeModel("gemini-2.0-flash-lite")
 
 st.set_page_config(page_title="Web Content Extractor", layout="centered")
-st.title("🧠 Web Content to Table (AI Extractor)")
+st.title("🧠 Web Content to Table")
 
-# Input text area
 raw_text = st.text_area("Paste the unstructured webpage content here:", height=300)
-
-# Desired output format
 output_format = st.selectbox("Select download format:", ["CSV", "JSON"])
 
 if st.button("Extract Information"):
     if not raw_text.strip():
         st.warning("Please paste some content.")
     else:
-        with st.spinner("Extracting data using GPT..."):
+        with st.spinner("Extracting using Gemini..."):
             prompt = f"""
-            Extract all structured information from the following text and return it as a JSON array of objects (list of dictionaries).
-            Try to identify fields like title, product, price, date, brand, color, model, etc.
+            Extract structured data from the following text and return ONLY a valid JSON array as if done by a professional Web Scrapper - data entry work (no explanations or formatting like markdown/code blocks).
+            Look for fields like name, product, email, contacts, socials, key features,price, date, brand, model, etc.
+            Avoid giving long paras or descriptions. Stay to the point.
 
-            Example input:
-            \"\"\"{raw_text}\"\"\"
+            Web Article Content:
+            {raw_text}
             """
 
             try:
-                response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0
-                )
-                content = response.choices[0].message["content"]
+                response = model.generate_content(prompt)
+                content = response.text.strip()
 
-                # Try parsing the response to JSON
+                # Optional: strip markdown ```json blocks if present
+                match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+                if match:
+                    content = match.group(1)
+                else:
+                    content = re.search(r'(\[.*\])', content, re.DOTALL).group(1)
+
                 json_data = json.loads(content)
                 df = pd.DataFrame(json_data)
 
-                st.success("Data extracted successfully!")
+                st.success("✅ Data extracted successfully!")
                 st.dataframe(df)
 
                 if output_format == "CSV":
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download CSV",
-                        data=csv,
-                        file_name="extracted_data.csv",
-                        mime="text/csv"
-                    )
+                    csv = df.to_csv(index=False).encode("utf-8")
+                    st.download_button("📥 Download CSV", csv, "data.csv", "text/csv")
                 else:
-                    json_output = df.to_json(orient="records", indent=2)
-                    st.download_button(
-                        label="📥 Download JSON",
-                        data=json_output,
-                        file_name="extracted_data.json",
-                        mime="application/json"
-                    )
+                    json_out = df.to_json(orient="records", indent=2).encode("utf-8")
+                    st.download_button("📥 Download JSON", json_out, "data.json", "application/json")
 
             except json.JSONDecodeError:
-                st.error("⚠️ OpenAI response was not valid JSON.")
-                st.text_area("Raw Output from OpenAI:", value=content, height=200)
+                st.error("⚠️ Gemini response was not valid JSON.")
+                st.code(content)
             except Exception as e:
-                st.error(f"Something went wrong: {str(e)}")
+                st.error(f"❌ Error: {str(e)}")
